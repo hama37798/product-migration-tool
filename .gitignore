@@ -1,0 +1,19 @@
+# ビルドで生成されるファイル
+bin/
+obj/
+
+# 実行時のDB
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+# ログ
+logs/
+
+# 認証情報・個人用設定
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+.aws/
