@@ -1,4 +1,83 @@
 ﻿using Microsoft.Data.Sqlite;
+using System.Text;
+using Amazon;
+using Amazon.S3;
+using Amazon.S3.Model;
+using Amazon.Runtime.CredentialManagement;
+
+Console.OutputEncoding = new UTF8Encoding(false);
+
+Directory.CreateDirectory("logs");
+
+string logName = $"migration-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.txt";
+string logPath = Path.Combine("logs", logName);
+var originalOutput = Console.Out;
+
+// 画面とファイルの両方へ同じ内容を出力する
+using (var logFile = new StreamWriter(logPath, false, new UTF8Encoding(false)))
+{
+    Console.SetOut(new TeeWriter(originalOutput, logFile));
+
+    try
+    {
+        Console.WriteLine($"処理開始：{DateTimeOffset.Now:O}");
+        RunMigration();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"処理中にエラーが発生しました：{ex.Message}");
+        Environment.ExitCode = 1;
+    }
+    finally
+    {
+        Console.WriteLine($"処理終了：{DateTimeOffset.Now:O}");
+        Console.Out.Flush();
+        Console.SetOut(originalOutput);
+    }
+}
+
+Console.WriteLine($"ログ保存先：{Path.GetFullPath(logPath)}");
+
+// 指定したときだけS3へ送る。通常の実行はAWS接続不要
+if (args.Contains("--upload-s3"))
+{
+    const string bucket = "hama37798-product-migration-logs-20261024";
+    string key = $"logs/{logName}";
+
+    try
+    {
+        var profiles = new CredentialProfileStoreChain();
+
+        if (!profiles.TryGetAWSCredentials("product-migration-sdk", out var credentials))
+        {
+            throw new InvalidOperationException("AWSの認証プロファイルが見つかりません。");
+        }
+
+        using var s3 = new AmazonS3Client(
+            credentials, RegionEndpoint.APSoutheast2);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        await s3.PutObjectAsync(new PutObjectRequest
+        {
+            BucketName = bucket,
+            Key = key,
+            FilePath = logPath,
+            ContentType = "text/plain; charset=utf-8"
+        }, timeout.Token);
+
+        Console.WriteLine($"S3送信成功：s3://{bucket}/{key}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"S3送信失敗：{ex.Message}");
+        Console.WriteLine("ローカルのログは保存済みです。DBの処理結果は変更しません。");
+        Environment.ExitCode = 1;
+    }
+}
+
+// この中に、これまでの商品チェック・登録処理が続く
+void RunMigration()
+{
 
 // ① DBに接続する。ファイルがなければ作成される
 using var connection = new SqliteConnection("Data Source=products.db");
@@ -224,3 +303,29 @@ using var countCommand = connection.CreateCommand();
 countCommand.CommandText = "SELECT COUNT(*) FROM products;";
 
 Console.WriteLine($"DBの商品総数：{countCommand.ExecuteScalar()}件");
+
+} // RunMigrationの終わり
+
+// Console.WriteLineの出力を、画面とログへ振り分ける
+sealed class TeeWriter(TextWriter screen, TextWriter file) : TextWriter
+{
+    public override Encoding Encoding => screen.Encoding;
+
+    public override void Write(char value)
+    {
+        screen.Write(value);
+        file.Write(value);
+    }
+
+    public override void Write(string? value)
+    {
+        screen.Write(value);
+        file.Write(value);
+    }
+
+    public override void Flush()
+    {
+        screen.Flush();
+        file.Flush();
+    }
+}
