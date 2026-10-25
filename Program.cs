@@ -7,6 +7,13 @@ using Amazon.Runtime.CredentialManagement;
 
 Console.OutputEncoding = new UTF8Encoding(false);
 
+// --apiを指定したときは、商品一覧APIを起動する
+if (args.Contains("--api"))
+{
+    await ProductApi.RunAsync();
+    return;
+}
+
 Directory.CreateDirectory("logs");
 
 string logName = $"migration-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.txt";
